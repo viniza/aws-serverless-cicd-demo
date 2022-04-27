@@ -1,0 +1,27 @@
+{
+  "name": "random",
+  "version": "1.0.0",
+  "description": "Provides a random string",
+  "main": "handler.js",
+  "scripts": {
+    "lint": "eslint *.js"
+  },
+  "author": "Isidro Hernandez",
+  "license": "ISC",
+  "homepage": "https://www.viniza.mx",
+  "devDependencies": {
+    "ajv": "^8.11.0",
+    "ajv-keywords": "^5.1.0",
+    "eslint": "^8.13.0",
+    "eslint-config-airbnb": "^19.0.4",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-jest": "^26.1.4",
+    "eslint-plugin-jsx-a11y": "^6.5.1",
+    "eslint-plugin-react": "^7.29.4",
+    "serverless": "3.15.0"
+  },
+  "dependencies": {
+    "crypto-js" : "^4.1.1"
+  }
+}

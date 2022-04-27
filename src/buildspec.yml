@@ -1,0 +1,32 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+    - cd src
+    - rm package-lock.json
+    - npm install --silent --no-progress -g npm
+    - npm install --silent --no-progress -g serverless
+    - npm --version
+  pre_build:
+    commands:
+    - npm install --silent --no-progress
+  build:
+    commands:
+    - npm run-script lint
+    - mkdir -p target/dev
+    - mkdir -p target/stg
+    - mkdir target/prod
+    - serverless package --package target/dev --stage dev --verbose --region us-east-1
+    - serverless package --package target/stg --stage stg --verbose --region us-east-1
+    - serverless package --package target/prod --stage prod --verbose --region us-east-1
+  post_build:
+    commands:
+    - chmod +x deploy.sh
+
+artifacts:
+  base-directory: src
+  files:
+  - target/**/*
+  - serverless.yml
+  - deploy.sh

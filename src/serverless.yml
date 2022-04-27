@@ -1,0 +1,21 @@
+frameworkVersion: 3.15.0
+
+service: random
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  environment:
+    STAGE: ${opt:stage}
+
+functions:
+  getRandomString:
+    handler: handler.getRandomString
+    events:
+      - http:
+          path: /random
+          method: get
+          request:
+            parameters:
+              querystrings:
+                size: true

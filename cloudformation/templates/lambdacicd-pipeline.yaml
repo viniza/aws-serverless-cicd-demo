@@ -1,0 +1,352 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This project demonstrates how to create a simple pipeline to deploy
+  AWS Lambda functions using serverless framework (https://www.serverless.com/)
+  ${ProjectName}-${OrgName}-${AppName}-Pipeline.
+
+Parameters:
+
+  ProjectName:
+    Description: Project name
+    Type: String
+    Default: LambdaCICD
+  OrgName:
+    Description: Organization name
+    Type: String
+    Default: Viniza
+  AppName:
+    Description: Name of application or workload
+    Type: String
+    Default: Demo
+  Branch:
+    Description: Repository branch name
+    Type: String
+    Default: main
+  Email:
+    Description: The email address where CodePipeline sends pipeline notifications
+    Type: String
+  CodeBuildEnvTypeValue:
+    Description: Environment to be used for the build process
+    Type: String
+    AllowedValues:
+      - LINUX_CONTAINER
+    Default: LINUX_CONTAINER
+  CodeBuildEnvCompTypeValue:
+    Description: Computatinal capability of the Environment. For more Information, visit https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+    Type: String
+    Default: BUILD_GENERAL1_SMALL
+  CodeBuildImageIdentifierTypeValue:
+    Description: Docker Image to be used by the container
+    Type: String
+    AllowedValues:
+      - aws/codebuild/amazonlinux2-x86_64-standard:2.0
+      - aws/codebuild/amazonlinux2-x86_64-standard:3.0
+      - aws/codebuild/amazonlinux2-aarch64-standard:1.0
+      - aws/codebuild/amazonlinux2-aarch64-standard:2.0
+      - aws/codebuild/standard:3.0
+      - aws/codebuild/standard:4.0
+      - aws/codebuild/standard:5.0
+      - aws/codebuild/windows-base:2019-1.0
+    Default: aws/codebuild/standard:5.0
+
+Resources:
+
+  BuildProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - cloudformation:*
+                - apigateway:*
+                - lambda:*
+                - s3:*
+                - iam:GetRole
+                - iam:CreateRole
+                - iam:DeleteRole
+                - iam:PutRolePolicy
+                - iam:DeleteRolePolicy
+                - iam:PassRole
+              Resource:
+                - '*'
+
+            -
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetBucketPolicy
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Join ['',['arn:aws:s3:::',!Ref ArtifactStoreBucket, '/*']]
+                - !Join ['',['arn:aws:s3:::',!Ref ArtifactStoreBucket]]
+            -
+              Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:DeleteLogGroup
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: Build project for Lambda application
+      ServiceRole: !Ref BuildProjectRole
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: !Sub ${CodeBuildEnvTypeValue}
+        ComputeType: !Sub ${CodeBuildEnvCompTypeValue}
+        Image: !Sub ${CodeBuildImageIdentifierTypeValue}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ./src/buildspec.yml
+      TimeoutInMinutes: 10
+
+  DeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: Deploy project for Lambda application
+      ServiceRole: !Ref BuildProjectRole
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: !Sub ${CodeBuildEnvTypeValue}
+        ComputeType: !Sub ${CodeBuildEnvCompTypeValue}
+        Image: !Sub ${CodeBuildImageIdentifierTypeValue}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+
+          phases:
+            build:
+              commands:
+                 - bash deploy.sh
+      TimeoutInMinutes: 10
+
+  Repository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub ${ProjectName}-${OrgName}-${AppName}
+
+  CodePipelineSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref Email
+          Protocol: email
+
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        #to be removed
+        - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service:
+              - codepipeline.amazonaws.com
+              - codebuild.amazonaws.com
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CodeCommitPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - codecommit:GetBranch
+                - codecommit:GetCommit
+                - codecommit:UploadArchive
+                - codecommit:GetUploadArchiveStatus
+                - codecommit:CancelUploadArchive
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${OrgName}-${AppName}
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Resource: '*'
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - sns:Publish
+                  - lambda:Invoke*
+                  - Lambda:List*
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - s3:*
+                - cloudformation:CreateStack
+                - cloudformation:DescribeStacks
+                - cloudformation:DeleteStack
+                - cloudformation:UpdateStack
+                - cloudformation:CreateChangeSet
+                - cloudformation:ExecuteChangeSet
+                - cloudformation:DeleteChangeSet
+                - cloudformation:DescribeChangeSet
+                - cloudformation:SetStackPolicy
+                - iam:PassRole
+                - sns:Publish
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                Effect: Allow
+                Resource: '*'
+      Tags:
+        - Key: OrgName
+          Value: !Ref OrgName
+        - Key: AppName
+          Value: !Ref AppName
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref ArtifactStoreBucket
+        Type: S3
+      DisableInboundStageTransitions: []
+      Name: !Sub ${ProjectName}-${OrgName}-${AppName}
+      RoleArn: !GetAtt [CodePipelineRole, Arn]
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: !GetAtt [Repository, Name]
+                BranchName: !Ref Branch
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: '1'
+        - Name: Build
+          Actions:
+            - Name: CreateBuild
+              RunOrder: 1
+              InputArtifacts:
+                - Name: SourceOutput
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref BuildProject
+              OutputArtifacts:
+                - Name: CodeBuildOutputArtifact
+        - Name: DeployDev
+          Actions:
+            - Name: Deploy
+              RunOrder: 1
+              InputArtifacts:
+                - Name: CodeBuildOutputArtifact
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeployProject
+                EnvironmentVariables: '[{"name":"env","value":"dev","type":"PLAINTEXT"}]'
+        - Name: DeployStaging
+          Actions:
+            - Name: Deploy
+              RunOrder: 1
+              InputArtifacts:
+                - Name: CodeBuildOutputArtifact
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeployProject
+                EnvironmentVariables: '[{"name":"env","value":"stg","type":"PLAINTEXT"}]'
+            - Name: ApprovalProduction
+              RunOrder: 2
+              ActionTypeId:
+                Category: Approval
+                Provider: Manual
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                CustomData: Review the commit before approving to Production. See external link for more information.
+                ExternalEntityLink: https://example.com
+                NotificationArn: !Ref CodePipelineSNSTopic
+        - Name: DeployProduction
+          Actions:
+            - Name: Deploy
+              RunOrder: 1
+              InputArtifacts:
+                - Name: CodeBuildOutputArtifact
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeployProject
+                EnvironmentVariables: '[{"name":"env","value":"prod","type":"PLAINTEXT"}]'
+
+
+
+
+Outputs:
+
+  PipelineNotificationTopic:
+    Description: Notification SNS ARN for shared pipeline notificiations
+    Value: !Ref CodePipelineSNSTopic
+  PipelineNotificationTopicName:
+    Description: Repo activity notifications topic name
+    Value: !GetAtt CodePipelineSNSTopic.TopicName
+  RepoCloneUrlHttp:
+    Description: URL for HTTP cloning
+    Value: !GetAtt Repository.CloneUrlHttp
+  RepoCloneUrlSsh:
+    Description: URL for SSH cloning
+    Value: !GetAtt Repository.CloneUrlSsh
+  RepoSshConfigHost:
+    Description: URL for SSH cloning
+    Value: !Sub git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${Repository.Name}
+  RepoName:
+    Description: Name of the repo
+    Value: !GetAtt Repository.Name
